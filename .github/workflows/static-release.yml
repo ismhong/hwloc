@@ -17,6 +17,12 @@
 # executables have no glibc dependency.  Combined with libtool's
 # -all-static flag, every executable is fully statically linked.
 #
+# Available backends are auto-detected by configure; no explicit
+# --disable-* flags are passed.  On Alpine, open-source backends
+# (PCI via libpciaccess, XML via libxml2, udev, etc.) are picked up
+# automatically, while proprietary ones (CUDA, NVML, ROCm, etc.) are
+# gracefully skipped.
+#
 # Based on: https://github.com/open-mpi/hwloc/wiki/StaticBuild
 
 name: Static musl Release

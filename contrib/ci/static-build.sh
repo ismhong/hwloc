@@ -23,8 +23,14 @@ DISTDIR=/work/dist
 
 # ---------------------------------------------------------------------------
 # Install build dependencies
+#
+# Core:         autotools, compiler, headers
+# Optional:     available Alpine packages for hwloc backends.
+#               Proprietary libraries (CUDA, NVML, ROCm, etc.) are not
+#               packaged in Alpine — configure skips them automatically.
 # ---------------------------------------------------------------------------
 apk add --no-cache \
+    bash \
     build-base \
     autoconf \
     automake \
@@ -32,6 +38,22 @@ apk add --no-cache \
     linux-headers \
     pkgconfig \
     file
+
+apk add --no-cache \
+    libpciaccess-dev \
+    libxml2-dev \
+    ncurses-dev \
+    zlib-dev \
+    eudev-dev
+
+# Cairo / X11 (graphical lstopo output)
+apk add --no-cache \
+    cairo-dev \
+    libx11-dev libxext-dev libxrender-dev \
+    pixman-dev freetype-dev fontconfig-dev
+
+# Level Zero (Intel GPU discovery)
+apk add --no-cache level-zero-dev 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Bootstrap autotools (configure is not committed to git)
@@ -49,25 +71,15 @@ apk add --no-cache \
 # itself knows to link fully static programs (without this, libtool may
 # still build shared objects or libtool wrappers).
 #
-# All optional hardware-discovery backends (PCI, GPU, etc.) are explicitly
-# disabled to avoid pulling in shared-library dependencies and to keep the
-# resulting binaries small and portable.
+# No --disable-* flags are passed: configure auto-detects all available
+# features.  On Alpine, only open-source backends (PCI, XML, udev, etc.)
+# are available; proprietary backends (CUDA, NVML, ROCm, etc.) are skipped
+# gracefully by configure.
 # ---------------------------------------------------------------------------
 ./configure \
     --prefix="${PREFIX}" \
     --enable-static \
     --disable-shared \
-    --disable-pci \
-    --disable-cuda \
-    --disable-nvml \
-    --disable-opencl \
-    --disable-rsmi \
-    --disable-levelzero \
-    --disable-gl \
-    --disable-libxml2 \
-    --disable-cairo \
-    --disable-plugins \
-    --disable-libudev \
     LDFLAGS="--static"
 
 # ---------------------------------------------------------------------------
@@ -85,14 +97,19 @@ make install-strip
 ARCHIVE="hwloc-${VERSION}-linux-${ARCH}-static.tar.gz"
 mkdir -p "${DISTDIR}"
 
-cd "${PREFIX}/bin"
-tar czf "${DISTDIR}/${ARCHIVE}" \
-    --transform="s|^|hwloc-${VERSION}/|" \
-    .
+# BusyBox tar (Alpine default) lacks --transform, so create a temporary
+# version-named directory and tar that instead.
+STAGING=$(mktemp -d)
+mkdir -p "${STAGING}/hwloc-${VERSION}"
+cp -a "${PREFIX}/bin/." "${STAGING}/hwloc-${VERSION}/"
+tar czf "${DISTDIR}/${ARCHIVE}" -C "${STAGING}" "hwloc-${VERSION}"
+rm -rf "${STAGING}"
 
 # ---------------------------------------------------------------------------
 # Print a summary of what was built
 # ---------------------------------------------------------------------------
+cd "${PREFIX}/bin"
+
 echo ""
 echo "========================================="
 echo "  Built: ${ARCHIVE}"
