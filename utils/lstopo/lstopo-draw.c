@@ -1411,6 +1411,86 @@ prepare_text(struct lstopo_output *loutput, hwloc_obj_t obj)
 	}
       }
     }
+
+    /* Add CPU frequency info for Package objects in graphical output */
+    if (obj->type == HWLOC_OBJ_PACKAGE) {
+      unsigned nr_kinds, k;
+      hwloc_topology_t topology = loutput->topology;
+
+      /* display CPU max/base frequencies from cpukind information */
+      nr_kinds = hwloc_cpukinds_get_nr(topology, 0);
+      if (nr_kinds) {
+        for (k = 0; k < nr_kinds; k++) {
+          hwloc_bitmap_t kind_set = hwloc_bitmap_alloc();
+          struct hwloc_infos_s *infos;
+          if (!hwloc_cpukinds_get_info(topology, k, kind_set, NULL, &infos, 0)
+              && hwloc_bitmap_intersects(obj->cpuset, kind_set)) {
+            const char *fmax = NULL, *fbase = NULL;
+            unsigned j;
+            for (j = 0; j < infos->count; j++) {
+              if (!strcmp(infos->array[j].name, "FrequencyMaxMHz"))
+                fmax = infos->array[j].value;
+              if (!strcmp(infos->array[j].name, "FrequencyBaseMHz"))
+                fbase = infos->array[j].value;
+            }
+            if (fmax || fbase) {
+              char buf[64];
+              if (fbase && fmax && strcmp(fmax, fbase))
+                snprintf(buf, sizeof(buf), "%s/%s MHz", fbase, fmax);
+              else if (fmax)
+                snprintf(buf, sizeof(buf), "%s MHz", fmax);
+              else
+                snprintf(buf, sizeof(buf), "%s MHz", fbase);
+              snprintf(lud->text[lud->ntext++].text, sizeof(lud->text[0].text), "%s", buf);
+            }
+          }
+          hwloc_bitmap_free(kind_set);
+        }
+      }
+
+    }
+
+    /* display current CPU frequency per-core from Linux sysfs
+     * Note: this is a Linux-specific feature for internal/debug usage.
+     * It reads /sys/devices/system/cpu/cpu<N>/cpufreq/scaling_cur_freq
+     * and gracefully degrades if unavailable (non-Linux, no cpufreq,
+     * or topology loaded from XML). */
+    if (obj->type == HWLOC_OBJ_CORE) {
+      hwloc_obj_t pu;
+      int have_cur = 0;
+      unsigned long cur_min = 0, cur_max = 0;
+      for (pu = obj->first_child; pu; pu = pu->next_sibling) {
+        if (pu->type == HWLOC_OBJ_PU) {
+          char path[128];
+          FILE *f;
+          unsigned long cur;
+          snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%u/cpufreq/scaling_cur_freq", pu->os_index);
+          f = fopen(path, "r");
+          if (f) {
+            if (fscanf(f, "%lu", &cur) == 1 && cur > 0) {
+              unsigned long cur_mhz = cur / 1000;
+              if (!have_cur) {
+                cur_min = cur_max = cur_mhz;
+                have_cur = 1;
+              } else {
+                if (cur_mhz < cur_min) cur_min = cur_mhz;
+                if (cur_mhz > cur_max) cur_max = cur_mhz;
+              }
+            }
+            fclose(f);
+          }
+        }
+      }
+      if (have_cur) {
+        char buf[64];
+        if (cur_min == cur_max)
+          snprintf(buf, sizeof(buf), "Cur: %lu MHz", cur_min);
+        else
+          snprintf(buf, sizeof(buf), "Cur: %lu-%lu MHz", cur_min, cur_max);
+        snprintf(lud->text[lud->ntext++].text, sizeof(lud->text[0].text), "%s", buf);
+      }
+    }
+
   }
 
   lud->textwidth = 0;
