@@ -4240,8 +4240,11 @@ look_sysfscpukinds(struct hwloc_topology *topology,
                    struct hwloc_linux_backend_data_s *data)
 {
   if (data->cpukinds_use_midr)
-    return look_sysfscpukinds_by_midr_regs(topology, data);
+    look_sysfscpukinds_by_midr_regs(topology, data);
 
+  /* Always collect frequency info (FrequencyMaxMHz/FrequencyBaseMHz/LinuxCapacity)
+   * even when MIDR is used to identify kinds, so that graphical output (SVG etc.)
+   * can display CPU frequency on Package and Core objects. */
   look_sysfscpukinds_by_freq(topology, data);
 
   if (data->arch == HWLOC_LINUX_ARCH_X86)

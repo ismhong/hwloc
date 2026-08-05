@@ -1416,6 +1416,10 @@ prepare_text(struct lstopo_output *loutput, hwloc_obj_t obj)
     if (obj->type == HWLOC_OBJ_PACKAGE) {
       unsigned nr_kinds, k;
       hwloc_topology_t topology = loutput->topology;
+      /* track already-displayed freq strings to avoid duplicates
+       * (MIDR + freq passes may create multiple cpukinds with the same freq) */
+      char seen_freqs[16][64];
+      unsigned nr_seen = 0;
 
       /* display CPU max/base frequencies from cpukind information */
       nr_kinds = hwloc_cpukinds_get_nr(topology, 0);
@@ -1423,25 +1427,47 @@ prepare_text(struct lstopo_output *loutput, hwloc_obj_t obj)
         for (k = 0; k < nr_kinds; k++) {
           hwloc_bitmap_t kind_set = hwloc_bitmap_alloc();
           struct hwloc_infos_s *infos;
-          if (!hwloc_cpukinds_get_info(topology, k, kind_set, NULL, &infos, 0)
+          int efficiency = HWLOC_CPUKIND_EFFICIENCY_UNKNOWN;
+          if (!hwloc_cpukinds_get_info(topology, k, kind_set, &efficiency, &infos, 0)
               && hwloc_bitmap_intersects(obj->cpuset, kind_set)) {
-            const char *fmax = NULL, *fbase = NULL;
+            const char *fmax = NULL, *fbase = NULL, *capacity = NULL;
             unsigned j;
             for (j = 0; j < infos->count; j++) {
               if (!strcmp(infos->array[j].name, "FrequencyMaxMHz"))
                 fmax = infos->array[j].value;
               if (!strcmp(infos->array[j].name, "FrequencyBaseMHz"))
                 fbase = infos->array[j].value;
+              if (!strcmp(infos->array[j].name, "LinuxCapacity") && !capacity)
+                capacity = infos->array[j].value;
             }
             if (fmax || fbase) {
               char buf[64];
+              char effstr[24] = "";
+              unsigned s;
+              int already_seen = 0;
+              /* only show eff when there are multiple kinds (heterogeneous cores);
+               * skip on homogeneous systems where eff=0 would be uninformative */
+              if (nr_kinds > 1) {
+                /* prefer ranked efficiency; fall back to LinuxCapacity */
+                if (efficiency != HWLOC_CPUKIND_EFFICIENCY_UNKNOWN)
+                  snprintf(effstr, sizeof(effstr), " (eff=%d)", efficiency);
+                else if (capacity)
+                  snprintf(effstr, sizeof(effstr), " (eff=%s)", capacity);
+              }
               if (fbase && fmax && strcmp(fmax, fbase))
-                snprintf(buf, sizeof(buf), "%s/%s MHz", fbase, fmax);
+                snprintf(buf, sizeof(buf), "%s/%s MHz%s", fbase, fmax, effstr);
               else if (fmax)
-                snprintf(buf, sizeof(buf), "%s MHz", fmax);
+                snprintf(buf, sizeof(buf), "%s MHz%s", fmax, effstr);
               else
-                snprintf(buf, sizeof(buf), "%s MHz", fbase);
-              snprintf(lud->text[lud->ntext++].text, sizeof(lud->text[0].text), "%s", buf);
+                snprintf(buf, sizeof(buf), "%s MHz%s", fbase, effstr);
+              /* skip if this exact string was already added */
+              for (s = 0; s < nr_seen; s++)
+                if (!strcmp(seen_freqs[s], buf)) { already_seen = 1; break; }
+              if (!already_seen) {
+                snprintf(lud->text[lud->ntext++].text, sizeof(lud->text[0].text), "%s", buf);
+                if (nr_seen < 16)
+                  snprintf(seen_freqs[nr_seen++], sizeof(seen_freqs[0]), "%s", buf);
+              }
             }
           }
           hwloc_bitmap_free(kind_set);
@@ -1482,11 +1508,35 @@ prepare_text(struct lstopo_output *loutput, hwloc_obj_t obj)
         }
       }
       if (have_cur) {
-        char buf[64];
+        char buf[64], effstr[24] = "";
+        int efficiency = HWLOC_CPUKIND_EFFICIENCY_UNKNOWN;
+        /* only show eff when there are multiple kinds (heterogeneous cores) */
+        if (obj->attr && obj->attr->core.cpukind >= 0
+            && hwloc_cpukinds_get_nr(loutput->topology, 0) > 1) {
+          hwloc_bitmap_t kind_set = hwloc_bitmap_alloc();
+          if (kind_set) {
+            struct hwloc_infos_s *infos = NULL;
+            if (!hwloc_cpukinds_get_info(loutput->topology, obj->attr->core.cpukind,
+                                         kind_set, &efficiency, &infos, 0)) {
+              if (efficiency != HWLOC_CPUKIND_EFFICIENCY_UNKNOWN) {
+                snprintf(effstr, sizeof(effstr), " (eff=%d)", efficiency);
+              } else if (infos) {
+                /* fall back to LinuxCapacity */
+                unsigned j;
+                for (j = 0; j < infos->count; j++)
+                  if (!strcmp(infos->array[j].name, "LinuxCapacity")) {
+                    snprintf(effstr, sizeof(effstr), " (eff=%s)", infos->array[j].value);
+                    break;
+                  }
+              }
+            }
+            hwloc_bitmap_free(kind_set);
+          }
+        }
         if (cur_min == cur_max)
-          snprintf(buf, sizeof(buf), "Cur: %lu MHz", cur_min);
+          snprintf(buf, sizeof(buf), "Cur: %lu MHz%s", cur_min, effstr);
         else
-          snprintf(buf, sizeof(buf), "Cur: %lu-%lu MHz", cur_min, cur_max);
+          snprintf(buf, sizeof(buf), "Cur: %lu-%lu MHz%s", cur_min, cur_max, effstr);
         snprintf(lud->text[lud->ntext++].text, sizeof(lud->text[0].text), "%s", buf);
       }
     }
