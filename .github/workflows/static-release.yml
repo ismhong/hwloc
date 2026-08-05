@@ -11,11 +11,12 @@
 #
 # Build strategy
 # --------------
-# Each architecture is built inside an Alpine Linux Docker container
-# running under QEMU user-mode emulation on a standard GitHub Actions
-# x86_64 runner.  Alpine uses musl by default, so the resulting
-# executables have no glibc dependency.  Combined with libtool's
-# -all-static flag, every executable is fully statically linked.
+# Each architecture is built inside an Alpine Linux Docker container.
+# x86_64 runs on a standard GitHub Actions x86_64 runner, while aarch64
+# runs on a native ARM64 runner (ubuntu-24.04-arm) — no QEMU emulation
+# needed.  Alpine uses musl by default, so the resulting executables
+# have no glibc dependency.  Combined with libtool's -all-static flag,
+# every executable is fully statically linked.
 #
 # Available backends are auto-detected by configure; no explicit
 # --disable-* flags are passed.  On Alpine, open-source backends
@@ -38,22 +39,21 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x86_64
             platform: linux/amd64
+            runner: ubuntu-latest
           - arch: aarch64
             platform: linux/arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU for cross-platform Docker builds
-        uses: docker/setup-qemu-action@v3
 
       - name: Build static binaries with musl libc
         run: |
